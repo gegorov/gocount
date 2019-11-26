@@ -7,44 +7,63 @@ import (
     "log"
     "net/http"
     "os"
-    "path/filepath"
-    "regexp"
     "runtime"
+    "strings"
 )
 
-type urlCount struct {
-    url       string
-    countOfGo int
-    body      string
-}
+var goRoutineLimit = 5
+var total int
+var sem = make(chan bool, goRoutineLimit)
 
 func main() {
 
-    filePath := "data.txt"
+    filePath := "./data.txt"
     urls := getSliceOfUrls(filePath)
 
     fmt.Println("gr:", runtime.NumGoroutine())
 
-    ch := make(chan urlCount)
+    ch := make(chan int, len(urls))
 
-    go fetch(urls, ch)
-
-    for v := range ch {
-        fmt.Println(v.url, v.countOfGo)
+    for _, v := range urls {
+        sem <- true
+        go fetch(v, ch)
     }
+
+    for i := 0; i < len(urls); i++ {
+        total += <-ch
+    }
+    fmt.Println("Total: ", total)
+
     fmt.Println("gr:", runtime.NumGoroutine())
-    fmt.Println("Exiting")
+
+}
+
+func fetch(url string, ch chan<- int) {
+
+    fmt.Println("gr:", runtime.NumGoroutine())
+    resp, err := http.Get(url)
+    if err != nil {
+        fmt.Println("Error fetching url: ", url, err)
+        return
+    }
+    defer resp.Body.Close()
+
+    contents, err := ioutil.ReadAll(resp.Body)
+    result := findGoMatches(contents)
+
+    fmt.Println("count of ", url, result)
+    ch <- result
+
+    defer func() {
+        <-sem
+    }()
+
 }
 
 func getSliceOfUrls(path string) []string {
     result := []string{}
 
-    absPth, err := filepath.Abs(path)
-    if err != nil {
-        fmt.Println(err)
-    }
-
-    file, err := os.Open(absPth)
+    file, err := os.Open(path)
     if err != nil {
         log.Fatal(err)
     }
@@ -54,39 +73,11 @@ func getSliceOfUrls(path string) []string {
 
     for scanner.Scan() {
         f := scanner.Text()
-
         result = append(result, f)
     }
     return result
 }
 
-func fetch(urls []string, ch chan<- urlCount) {
-    for _, url := range urls {
-        fmt.Println("gr:", runtime.NumGoroutine())
-        resp, err := http.Get(url)
-        if err != nil {
-            fmt.Println("Error fetching url: ", url, err)
-            return
-        }
-        defer resp.Body.Close()
-
-        contents, err := ioutil.ReadAll(resp.Body)
-        result := urlCount{
-            url:       url,
-            countOfGo: findGoMatches(contents),
-            body:      string(contents),
-        }
-
-        ch <- result
-    }
-    close(ch)
-
-}
-
 func findGoMatches(s []byte) int {
-    re := regexp.MustCompile(`(?mi)go`)
-
-    result := re.FindAllIndex(s, -1)
-
-    return len(result)
+    return strings.Count(string(s), "Go")
 }
