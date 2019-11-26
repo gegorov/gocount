@@ -7,40 +7,55 @@ import (
     "log"
     "net/http"
     "os"
-    "runtime"
     "strings"
+    "sync"
 )
 
-var goRoutineLimit = 5
-var total int
-var sem = make(chan bool, goRoutineLimit)
+const goRoutineLimit = 5
 
 func main() {
+    var total int
+
+    ch := make(chan int)
 
     filePath := "./data.txt"
-    urls := getSliceOfUrls(filePath)
-
-    fmt.Println("gr:", runtime.NumGoroutine())
-
-    ch := make(chan int, len(urls))
-
-    for _, v := range urls {
-        sem <- true
-        go fetch(v, ch)
+    urls, err := getSliceOfUrls(filePath)
+    if err != nil {
+        log.Fatal(err)
     }
 
-    for i := 0; i < len(urls); i++ {
-        total += <-ch
+
+    go producer(urls, ch)
+
+    for count := range ch {
+        total += count
     }
     fmt.Println("Total: ", total)
 
-    fmt.Println("gr:", runtime.NumGoroutine())
 
+}
+
+func producer(urls []string, ch chan int)  {
+    var wg sync.WaitGroup
+    sem := make(chan bool, goRoutineLimit)
+
+    for _, v := range urls{
+        url := v
+        sem <- true
+        wg.Add(1)
+        go func() {
+            fetch(url, ch)
+            <-sem
+            wg.Done()
+        }()
+    }
+
+    wg.Wait()
+    close(ch)
 }
 
 func fetch(url string, ch chan<- int) {
 
-    fmt.Println("gr:", runtime.NumGoroutine())
     resp, err := http.Get(url)
     if err != nil {
         fmt.Println("Error fetching url: ", url, err)
@@ -49,35 +64,31 @@ func fetch(url string, ch chan<- int) {
     defer resp.Body.Close()
 
     contents, err := ioutil.ReadAll(resp.Body)
-    result := findGoMatches(contents)
+    if err != nil {
+        fmt.Printf("can't read body (%s): %s", url, err)
+        return
+    }
+
+    result := strings.Count(string(contents), "Go")
 
     fmt.Println("count of ", url, result)
     ch <- result
-
-    defer func() {
-        <-sem
-    }()
-
 }
 
-func getSliceOfUrls(path string) []string {
+func getSliceOfUrls(path string) ([]string, error) {
     result := []string{}
 
     file, err := os.Open(path)
     if err != nil {
-        log.Fatal(err)
+        return result, err
     }
     defer file.Close()
 
     scanner := bufio.NewScanner(file)
 
     for scanner.Scan() {
-        f := scanner.Text()
-        result = append(result, f)
+        url := scanner.Text()
+        result = append(result, url)
     }
-    return result
-}
-
-func findGoMatches(s []byte) int {
-    return strings.Count(string(s), "Go")
+    return result, nil
 }
