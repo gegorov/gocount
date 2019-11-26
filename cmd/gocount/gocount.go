@@ -24,7 +24,6 @@ func main() {
         log.Fatal(err)
     }
 
-
     go producer(urls, ch)
 
     for count := range ch {
@@ -32,14 +31,13 @@ func main() {
     }
     fmt.Println("Total: ", total)
 
-
 }
 
-func producer(urls []string, ch chan int)  {
+func producer(urls []string, ch chan int) {
     var wg sync.WaitGroup
     sem := make(chan bool, goRoutineLimit)
 
-    for _, v := range urls{
+    for _, v := range urls {
         url := v
         sem <- true
         wg.Add(1)
